@@ -1081,10 +1081,15 @@ void Handler::callActiveReset() {
 void Handler::callWrite(uint8_t byte) { pending_write_ = byte; }
 
 void Handler::stageMasterBulk() {
+#if defined(ESP_PLATFORM) && !EBUS_SIMULATION
+  active_master_preloaded_ = false;
+  if (active_master_index_ == 1) callWrite(active_master_[1]);
+#else
   // Copies (no heap: Sequence is stack-backed) so a later active_master_
   // clear cannot dangle the staged block before the end-of-step flush.
   pending_write_bulk_.assignSlice(active_master_, 1);
   active_master_preloaded_ = true;
+#endif
 }
 
 void Handler::onBusRequested() {

@@ -501,6 +501,7 @@ void ClientManager::handleBusAvailableForSession() {
   // Never fires into our own in-flight attempt: Request must sit in
   // observe with no armed intent and no fresh SYN, otherwise our QQ
   // would jam it.
+#if !defined(ESP_PLATFORM) || EBUS_SIMULATION
   if (bus_ && request_->getState() == RequestState::observe &&
       !request_->busRequestPending() &&
       bus_->lastActivityAgeUs() > ClientManagerLimits::external_idle_fire_us) {
@@ -548,6 +549,8 @@ void ClientManager::handleBusAvailableForSession() {
     request_->busRequestCompleted();
     return;
   }
+
+#endif
 
   if (request_->busAvailable()) {
     uint8_t first_byte = 0;

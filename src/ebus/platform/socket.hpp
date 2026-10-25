@@ -108,8 +108,15 @@ class Socket {
         fd_ = -1;
       }
     }
-#elif defined(POSIX)
+#elif defined(POSIX) && defined(SOCK_NONBLOCK)
     fd_ = ::socket(af, sock_type | SOCK_NONBLOCK, 0);
+#elif defined(POSIX)
+    // macOS has no SOCK_NONBLOCK socket type flag.
+    fd_ = ::socket(af, sock_type, 0);
+    if (fd_ != -1 && !platform::setNonBlocking(fd_)) {
+      platform::close(fd_);
+      fd_ = -1;
+    }
 #endif
     assert(fd_ != -1 && "Socket creation failed");
   }

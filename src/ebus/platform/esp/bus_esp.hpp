@@ -21,6 +21,7 @@
 #include "driver/gptimer.h"
 #include "driver/uart.h"
 #include "esp_timer.h"
+#include <ebus/detail/esp_timing.hpp>
 #include "platform/bus_base.hpp"
 #include "platform/service_thread.hpp"
 
@@ -104,19 +105,21 @@ class BusEsp : public BusBase {
   std::unique_ptr<ServiceThread> syn_worker_;
 
   std::unique_ptr<ServiceThread> worker_;
-  std::atomic<bool> running_{false};
+  ebus_timing::AtomicWord running_;
 
-  // ISR/state
-  static constexpr uint8_t falling_edge_buffer_size = 12;
-
-  // The byte time at 2400 baud for 10 bits with a 0.5-bit offset is
-  // approximately 9.5 * bit_time_us = 9.5 * 416.67 us = 3958.33 us
-  static constexpr int64_t byte_time_center_us_ =
-      static_cast<int64_t>(Physical::byte_center_bits * Physical::bit_time_us);
-
-  uint8_t buffer_index_ = 0;  // Index for falling edge buffer
-  int64_t micros_edge_buffer_[falling_edge_buffer_size] = {0};
-  int64_t micros_start_bit_ = 0;  // Estimated start bit time
+  // All edge timestamps and arbitration deadlines use the same continuously
+  // running GPTimer clock. esp_timer timestamps are only for diagnostics/idle.
+  ebus_timing::Edges edges_;
+  ebus_timing::SynStamp armed_syn_;
+  uint64_t qq_deadline_us_ = 0;
+  uint32_t consumed_syn_generation_ = 0;
+  uint8_t qq_address_ = 0;
+  uint32_t qq_request_generation_ = 0;
+  bool syn_notification_pending_ = false;
+  bool recovering_ = true;
+  bool gpio_registered_ = false;
+  bool gpio_service_owned_ = false;
+  bool timer_started_ = false;
 
   bool bus_request_flag_ = false;
   bool start_bit_flag_ = false;
@@ -141,7 +144,7 @@ class BusEsp : public BusBase {
   uint32_t syn_postponed_count_ = 0;
   bool syn_active_{false};
 
-  std::atomic<bool> syn_running_{false};
+  ebus_timing::AtomicWord syn_running_;
   uint64_t syn_base_us_ = 0;    // Base SYN interval in microseconds
   uint64_t syn_unique_us_ = 0;  // Unique SYN interval in microseconds
 
@@ -151,6 +154,7 @@ class BusEsp : public BusBase {
   portMUX_TYPE listener_mux_ = portMUX_INITIALIZER_UNLOCKED;
 
   void recordUtilization(uint8_t byte);
+  void recoverUart();
 
   // setup helpers
   void configureUart();
