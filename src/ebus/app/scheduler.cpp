@@ -209,6 +209,7 @@ void Scheduler::onHandlerProtocol(const ProtocolInfo& info) {
 
 bool Scheduler::injectProtocolEvent(const ProtocolEvent& event) {
   bool need_reset = false;
+  std::optional<ProtocolEvent> arbitration_failure;
 
   {
     platform::LockGuard<platform::Mutex> lock(data_mutex_);
@@ -293,6 +294,21 @@ bool Scheduler::injectProtocolEvent(const ProtocolEvent& event) {
     }
 
     auto terminal_item = std::move(active_item_->item);
+    if (event.type == ProtocolEvent::Type::lost) {
+      // Intermediate losses stay internal. Publish one terminal error when
+      // the retry budget is exhausted so clients can observe failed writes.
+      arbitration_failure = event;
+      arbitration_failure->type = ProtocolEvent::Type::error;
+      arbitration_failure->level = LogLevel::error;
+      arbitration_failure->protocol_error = ProtocolError::arbitration_lost;
+      arbitration_failure->attempts = terminal_item.attempts;
+      arbitration_failure->result = RequestResult::first_lost;
+      uint8_t master[SequenceLimits::model_capacity]{};
+      master[0] = handler_->getSourceAddress();
+      const auto length = std::min(terminal_item.message.size(), sizeof(master) - 1);
+      std::copy_n(terminal_item.message.begin(), length, master + 1);
+      arbitration_failure->master.assign(master, length + 1);
+    }
     active_item_.reset();
     current_session_id_.store(0, std::memory_order_release);
     current_poll_id_.store(0, std::memory_order_release);
@@ -312,6 +328,11 @@ bool Scheduler::injectProtocolEvent(const ProtocolEvent& event) {
 
   if (need_reset && handler_) {
     handler_->reset();
+  }
+  // Dispatch outside the scheduler mutex. The reactor processes this error
+  // after the original lost event; it no longer belongs to an active item.
+  if (arbitration_failure && event_sink_) {
+    event_sink_(std::move(*arbitration_failure));
   }
   return true;
 }

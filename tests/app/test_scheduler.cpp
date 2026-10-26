@@ -534,6 +534,62 @@ TEST_CASE("Scheduler breaker: success restarts cooldown growth",
   REQUIRE(h.scheduler.breakerOpen() == true);
 }
 
+TEST_CASE("Scheduler reports one terminal arbitration error after three losses",
+          "[app][scheduler][retries]") {
+  BreakerHarness h;
+  h.scheduler.setMaxAttempts(3);
+  h.scheduler.setBaseBackoff(1);
+  std::vector<ProtocolEvent> results;
+  h.scheduler.setProtocolEventSink([&](ProtocolEvent&& event) {
+    results.push_back(std::move(event));
+  });
+  const auto sid = h.startItem();
+  ProtocolEvent lost{};
+  lost.type = ProtocolEvent::Type::lost;
+  lost.session_id = sid;
+  for (unsigned attempt = 1; attempt <= 3; ++attempt) {
+    REQUIRE(h.settle(lost));
+    if (attempt < 3) {
+      REQUIRE(results.empty());
+      std::this_thread::sleep_until(h.scheduler.nextDueTime());
+      REQUIRE(h.scheduler.tick());
+    }
+  }
+  REQUIRE(results.size() == 1);
+  const auto terminal = results.front();
+  REQUIRE(terminal.type == ProtocolEvent::Type::error);
+  REQUIRE(terminal.protocol_error == ebus::ProtocolError::arbitration_lost);
+  REQUIRE(terminal.session_id == sid);
+  REQUIRE(terminal.attempts == 3);
+  REQUIRE(terminal.master[0] == 0x01);
+  REQUIRE(terminal.master[1] == 0xfe);
+  REQUIRE_FALSE(h.scheduler.injectProtocolEvent(terminal));
+  REQUIRE(results.size() == 1);
+  REQUIRE_FALSE(h.scheduler.breakerOpen());
+  REQUIRE(h.scheduler.size() == 0);
+}
+
+TEST_CASE("Scheduler succeeds after a lost arbitration without a terminal error",
+          "[app][scheduler][retries]") {
+  BreakerHarness h;
+  h.scheduler.setMaxAttempts(3);
+  h.scheduler.setBaseBackoff(1);
+  std::vector<ProtocolEvent> results;
+  h.scheduler.setProtocolEventSink([&](ProtocolEvent&& event) {
+    results.push_back(std::move(event));
+  });
+  const auto sid = h.startItem();
+  ProtocolEvent lost{};
+  lost.type = ProtocolEvent::Type::lost;
+  lost.session_id = sid;
+  REQUIRE(h.settle(lost));
+  std::this_thread::sleep_until(h.scheduler.nextDueTime());
+  REQUIRE(h.scheduler.tick());
+  REQUIRE(h.settle(h.telegramFor(sid)));
+  REQUIRE(results.empty());
+  REQUIRE(h.scheduler.size() == 0);
+}
+
 TEST_CASE("Scheduler reserves capacity for retrying its active telegram",
           "[app][scheduler][retries]") {
   BreakerHarness h;
