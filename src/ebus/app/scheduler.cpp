@@ -274,7 +274,8 @@ bool Scheduler::injectProtocolEvent(const ProtocolEvent& event) {
       }
 
       active_item_->item.attempts++;
-      if (!is_fatal && active_item_->item.attempts < max_attempts_) {
+      if (!is_fatal && !active_item_->item.cancelled &&
+          active_item_->item.attempts < max_attempts_) {
         if (handler_) {
           handler_->getMonitor()->updateScheduler([](auto& m) { m.retries++; });
         }
@@ -294,7 +295,7 @@ bool Scheduler::injectProtocolEvent(const ProtocolEvent& event) {
     }
 
     auto terminal_item = std::move(active_item_->item);
-    if (event.type == ProtocolEvent::Type::lost) {
+    if (event.type == ProtocolEvent::Type::lost && !terminal_item.cancelled) {
       // Intermediate losses stay internal. Publish one terminal error when
       // the retry budget is exhausted so clients can observe failed writes.
       arbitration_failure = event;
@@ -424,6 +425,35 @@ uint32_t Scheduler::enqueue(uint8_t priority, ByteView message,
   return 0;
 }
 
+uint32_t Scheduler::enqueueReplacing(uint8_t priority, ByteView message,
+                                     uint32_t replace_session_id) {
+  Item item;
+  item.priority = priority;
+  item.due = Clock::now();
+  item.message.assign(message);
+  const auto session_id = next_session_id_++;
+  item.session_id = session_id;
+  if (pushItem(std::move(item), replace_session_id)) return session_id;
+  return 0;
+}
+
+bool Scheduler::cancel(uint32_t session_id) {
+  if (session_id == 0) return false;
+  platform::LockGuard<platform::Mutex> lock(data_mutex_);
+  for (auto it = scheduled_items_.begin(); it != scheduled_items_.end(); ++it) {
+    if (it->session_id == session_id) {
+      scheduled_items_.erase(it);
+      std::make_heap(scheduled_items_.begin(), scheduled_items_.end(), Compare());
+      return true;
+    }
+  }
+  if (active_item_ && active_item_->session_id == session_id) {
+    active_item_->item.cancelled = true;
+    return true;
+  }
+  return false;
+}
+
 uint32_t Scheduler::enqueueAt(uint8_t priority, ByteView message,
                               TimePoint when, uint16_t poll_id) {
   Item it;
@@ -481,16 +511,34 @@ void Scheduler::resetPeakMetrics() {
   max_queue_size_ = scheduled_items_.size() + (active_item_ ? 1 : 0);
 }
 
-bool Scheduler::pushItem(Item&& it) {
+bool Scheduler::pushItem(Item&& item, uint32_t replace_session_id) {
   platform::LockGuard<platform::Mutex> lock(data_mutex_);
-  if (scheduled_items_.size() + (active_item_ ? 1 : 0) >= SchedulerLimits::max_items) {
-    return false;  // Queue is full
+  auto replaced = scheduled_items_.end();
+  if (replace_session_id != 0) {
+    replaced = std::find_if(scheduled_items_.begin(), scheduled_items_.end(),
+                            [replace_session_id](const Item& queued) {
+                              return queued.session_id == replace_session_id;
+                            });
   }
-  scheduled_items_.push_back(std::move(it));
+  const auto count = scheduled_items_.size() + (active_item_ ? 1 : 0);
+  const auto removed = replaced != scheduled_items_.end() ? 1 : 0;
+  if (count - removed >= SchedulerLimits::max_items) {
+    return false;  // Leave the old session intact if replacement cannot fit.
+  }
+
+  if (replaced != scheduled_items_.end()) {
+    scheduled_items_.erase(replaced);
+    std::make_heap(scheduled_items_.begin(), scheduled_items_.end(), Compare());
+  }
+  if (replace_session_id != 0 && active_item_ &&
+      active_item_->session_id == replace_session_id) {
+    active_item_->item.cancelled = true;
+  }
+  scheduled_items_.push_back(std::move(item));
   const auto size = scheduled_items_.size() + (active_item_ ? 1 : 0);
   if (size > max_queue_size_) max_queue_size_ = size;
   std::push_heap(scheduled_items_.begin(), scheduled_items_.end(), Compare());
-  return true;  // Successfully pushed
+  return true;
 }
 
 Scheduler::Duration Scheduler::backoffDuration(
