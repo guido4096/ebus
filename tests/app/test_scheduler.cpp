@@ -281,7 +281,7 @@ struct BreakerHarness {
         handler(runtimeConfig().address, &bus, &request, &bus_monitor),
         scheduler(&handler) {
     handler.setSourceAddress(runtimeConfig().address);
-    scheduler.setMaxAttempts(1);  // production: single shot, next on schedule
+    scheduler.setMaxAttempts(1);  // Exercise terminal outcomes without retries.
     scheduler.setBreakerThreshold(3);
     scheduler.setBreakerCooldownMs(60000, 60000);
   }
@@ -532,4 +532,23 @@ TEST_CASE("Scheduler breaker: success restarts cooldown growth",
   REQUIRE(h.settle(h.errorFor(sid)) == true);
   REQUIRE(h.scheduler.breakerTrips() == 1);
   REQUIRE(h.scheduler.breakerOpen() == true);
+}
+
+TEST_CASE("Scheduler reserves capacity for retrying its active telegram",
+          "[app][scheduler][retries]") {
+  BreakerHarness h;
+  h.scheduler.setMaxAttempts(3);
+  h.scheduler.setBaseBackoff(1);
+  const auto sid = h.startItem();
+  REQUIRE(h.scheduler.size() == 1);
+  const auto message = ebus::toVector("feb5050327002d");
+  for (size_t i = 1; i < h.scheduler.capacity(); ++i) {
+    REQUIRE(h.scheduler.enqueue(1, message) != 0);
+  }
+  REQUIRE(h.scheduler.enqueue(1, message) == 0);
+  ProtocolEvent lost{};
+  lost.type = ProtocolEvent::Type::lost;
+  lost.session_id = sid;
+  REQUIRE(h.settle(lost));
+  REQUIRE(h.scheduler.size() == h.scheduler.capacity());
 }
