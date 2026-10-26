@@ -350,6 +350,9 @@ bool Scheduler::tick() {
                     Compare());
       item_to_start = std::move(scheduled_items_.back());
       scheduled_items_.pop_back();
+      // Keep the active item counted while handing it to the handler. New
+      // enqueues must leave room for this item's possible retry.
+      active_item_ = {*item_to_start, Clock::now(), item_to_start->session_id};
       current_session_id_.store(item_to_start->session_id,
                                 std::memory_order_release);
       current_poll_id_.store(item_to_start->poll_id, std::memory_order_release);
@@ -366,13 +369,6 @@ bool Scheduler::tick() {
   }
 
   if (item_to_start) {
-    {
-      // Correlation FIX: Set active_item_ BEFORE calling the handler.
-      // Ensures immediate terminal results (structural errors) map correctly.
-      platform::LockGuard<platform::Mutex> lock(data_mutex_);
-      active_item_ = {*item_to_start, Clock::now(), item_to_start->session_id};
-    }
-
     if (!handler_->sendActiveMessage(item_to_start->message)) {
       ProtocolEvent fail_ev{};
       fail_ev.type = ProtocolEvent::Type::error;
@@ -449,7 +445,7 @@ Clock::time_point Scheduler::nextDueTime() const {
 
 size_t Scheduler::size() const {
   platform::LockGuard<platform::Mutex> lock(data_mutex_);
-  return scheduled_items_.size();
+  return scheduled_items_.size() + (active_item_ ? 1 : 0);
 }
 
 size_t Scheduler::capacity() const { return SchedulerLimits::max_items; }
@@ -461,17 +457,17 @@ SchedulerStatus Scheduler::fetchStatus() const {
 
 void Scheduler::resetPeakMetrics() {
   platform::LockGuard<platform::Mutex> lock(data_mutex_);
-  max_queue_size_ = scheduled_items_.size();
+  max_queue_size_ = scheduled_items_.size() + (active_item_ ? 1 : 0);
 }
 
 bool Scheduler::pushItem(Item&& it) {
   platform::LockGuard<platform::Mutex> lock(data_mutex_);
-  if (scheduled_items_.size() >= SchedulerLimits::max_items) {
+  if (scheduled_items_.size() + (active_item_ ? 1 : 0) >= SchedulerLimits::max_items) {
     return false;  // Queue is full
   }
   scheduled_items_.push_back(std::move(it));
-  if (scheduled_items_.size() > max_queue_size_)
-    max_queue_size_ = scheduled_items_.size();
+  const auto size = scheduled_items_.size() + (active_item_ ? 1 : 0);
+  if (size > max_queue_size_) max_queue_size_ = size;
   std::push_heap(scheduled_items_.begin(), scheduled_items_.end(), Compare());
   return true;  // Successfully pushed
 }
