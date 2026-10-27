@@ -209,6 +209,7 @@ void Scheduler::onHandlerProtocol(const ProtocolInfo& info) {
 
 bool Scheduler::injectProtocolEvent(const ProtocolEvent& event) {
   bool need_reset = false;
+  std::optional<ProtocolEvent> arbitration_failure;
 
   {
     platform::LockGuard<platform::Mutex> lock(data_mutex_);
@@ -294,6 +295,20 @@ bool Scheduler::injectProtocolEvent(const ProtocolEvent& event) {
     }
 
     auto terminal_item = std::move(active_item_->item);
+    if (event.type == ProtocolEvent::Type::lost && !terminal_item.cancelled) {
+      // Intermediate losses stay internal; report only exhausted attempts.
+      arbitration_failure = event;
+      arbitration_failure->type = ProtocolEvent::Type::error;
+      arbitration_failure->level = LogLevel::error;
+      arbitration_failure->protocol_error = ProtocolError::arbitration_lost;
+      arbitration_failure->attempts = terminal_item.attempts;
+      arbitration_failure->result = RequestResult::first_lost;
+      uint8_t master[SequenceLimits::model_capacity]{};
+      master[0] = handler_->getSourceAddress();
+      const auto length = std::min(terminal_item.message.size(), sizeof(master) - 1);
+      std::copy_n(terminal_item.message.begin(), length, master + 1);
+      arbitration_failure->master.assign(master, length + 1);
+    }
     active_item_.reset();
     current_session_id_.store(0, std::memory_order_release);
     current_poll_id_.store(0, std::memory_order_release);
@@ -313,6 +328,10 @@ bool Scheduler::injectProtocolEvent(const ProtocolEvent& event) {
 
   if (need_reset && handler_) {
     handler_->reset();
+  }
+  // The reactor receives this after the lost event; dispatch outside the lock.
+  if (arbitration_failure && event_sink_) {
+    event_sink_(std::move(*arbitration_failure));
   }
   return true;
 }
@@ -474,7 +493,7 @@ Clock::time_point Scheduler::nextDueTime() const {
 
 size_t Scheduler::size() const {
   platform::LockGuard<platform::Mutex> lock(data_mutex_);
-  return scheduled_items_.size();
+  return scheduled_items_.size() + (active_item_ ? 1 : 0);
 }
 
 size_t Scheduler::capacity() const { return SchedulerLimits::max_items; }
@@ -486,7 +505,7 @@ SchedulerStatus Scheduler::fetchStatus() const {
 
 void Scheduler::resetPeakMetrics() {
   platform::LockGuard<platform::Mutex> lock(data_mutex_);
-  max_queue_size_ = scheduled_items_.size();
+  max_queue_size_ = scheduled_items_.size() + (active_item_ ? 1 : 0);
 }
 
 bool Scheduler::pushItem(Item&& item, uint32_t replace_session_id) {
@@ -499,7 +518,9 @@ bool Scheduler::pushItem(Item&& item, uint32_t replace_session_id) {
                             });
   }
   const auto removed = replaced != scheduled_items_.end() ? 1 : 0;
-  if (scheduled_items_.size() - removed >= SchedulerLimits::max_items) {
+  // An active telegram keeps its slot in case it needs to be retried.
+  const auto count = scheduled_items_.size() + (active_item_ ? 1 : 0);
+  if (count - removed >= SchedulerLimits::max_items) {
     return false;  // Rejection must leave the old session intact.
   }
   if (replaced != scheduled_items_.end()) {
@@ -511,8 +532,8 @@ bool Scheduler::pushItem(Item&& item, uint32_t replace_session_id) {
     active_item_->item.cancelled = true;
   }
   scheduled_items_.push_back(std::move(item));
-  if (scheduled_items_.size() > max_queue_size_)
-    max_queue_size_ = scheduled_items_.size();
+  const auto size = scheduled_items_.size() + (active_item_ ? 1 : 0);
+  if (size > max_queue_size_) max_queue_size_ = size;
   std::push_heap(scheduled_items_.begin(), scheduled_items_.end(), Compare());
   return true;  // Successfully pushed
 }

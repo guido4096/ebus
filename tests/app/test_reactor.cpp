@@ -400,3 +400,55 @@ TEST_CASE("Reactor: Error Buffer Cleared After clearErrors",
   env.reactor.stop();
   env.bus.stop();
 }
+
+TEST_CASE("Reactor: Terminal arbitration failure reaches the public callback once",
+          "[app][reactor][integration][retries]") {
+  ReactorTestEnv env(0x10, false);
+  const auto master = toVector("10feb5050327002d");
+  struct ReceivedResult {
+    std::atomic<uint32_t> count{0};
+    uint32_t session = 0;
+    uint32_t attempts = 0;
+    ProtocolError error{};
+    RequestResult result{};
+    std::vector<uint8_t> master;
+  } received;
+  env.reactor.setProtocolCallback([&received](const ProtocolInfo& info) {
+    if (!info.is_error) return;
+    received.session = info.session_id;
+    received.attempts = info.attempts;
+    received.error = info.protocol_error;
+    received.result = info.result;
+    received.master.assign(info.master_view.begin(), info.master_view.end());
+    received.count++;
+  });
+
+  // The scheduler has already settled this session before emitting its
+  // terminal error. No running physical bus is needed to dispatch it.
+  ProtocolEvent terminal{};
+  terminal.type = ProtocolEvent::Type::error;
+  terminal.session_id = 99;
+  terminal.attempts = 3;
+  terminal.protocol_error = ProtocolError::arbitration_lost;
+  terminal.result = RequestResult::first_lost;
+  terminal.level = LogLevel::error;
+  terminal.master.assign(master.data(), master.size());
+  REQUIRE(env.reactor.pushProtocolEvent(std::move(terminal)));
+  env.reactor.start();
+  const bool callback_seen =
+      waitCondition([&] { return received.count.load() > 0; }, 2000);
+  env.reactor.stop();
+
+  REQUIRE(callback_seen);
+  REQUIRE(received.count.load() == 1);
+  REQUIRE(received.session == 99);
+  REQUIRE(received.attempts == 3);
+  REQUIRE(received.error == ProtocolError::arbitration_lost);
+  REQUIRE(received.result == RequestResult::first_lost);
+  REQUIRE(received.master == master);
+  REQUIRE(env.scheduler.size() == 0);
+  REQUIRE(env.reactor.protocolQueueSize() == 0);
+  int error_entries = 0;
+  env.reactor.fetchErrors([&](const ErrorEntry&) { error_entries++; });
+  REQUIRE(error_entries == 1);
+}
