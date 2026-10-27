@@ -64,6 +64,27 @@ TEST_CASE("Controller: Lifecycle and API", "[app][controller]") {
   REQUIRE(!controller.isRunning());
 }
 
+TEST_CASE("Controller: Cancel and replace queued sessions",
+          "[app][controller][replace]") {
+  ebus::Controller controller;
+  const auto message = ebus::toVector("feb5050327002d");
+  REQUIRE_FALSE(controller.cancel(1));
+  REQUIRE(controller.enqueueReplacing(1, message, 0) == 0);
+
+  ebus::EbusConfig config;
+  REQUIRE(controller.configure(config));
+  const auto old = controller.enqueue(1, message);
+  REQUIRE(old != 0);
+  const auto replacement = controller.enqueueReplacing(
+      1, ebus::toVector("feb5050327002e"), old);
+  REQUIRE(replacement != 0);
+  REQUIRE(replacement != old);
+  REQUIRE_FALSE(controller.cancel(old));
+  REQUIRE(controller.cancel(replacement));
+  REQUIRE_FALSE(controller.cancel(replacement));
+  REQUIRE_FALSE(controller.cancel(0));
+}
+
 TEST_CASE("Controller: System Discovery automated response",
           "[app][controller]") {
   ebus::EbusConfig config;
