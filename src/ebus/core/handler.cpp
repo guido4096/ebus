@@ -221,6 +221,8 @@ void Handler::run(const BusEventInfo& info) {
       pending_write_.reset();
       if (bus_monitor_) {
         bus_monitor_->write.markEnd();
+        // Spec §8.1 denominator: wire bytes post AA/A9 expansion (the
+        // Sequence escapes below this layer), incl. CRC.
         bus_monitor_->updateHandler(
             [](auto& m) { m.total_sent_protocol_bytes++; });
       }
@@ -1116,19 +1118,31 @@ void Handler::callOnTelegram(MessageType message_type,
   if (protocol_callback_) {
     if (bus_monitor_) {
       uint32_t data_bytes = 0;
+      uint32_t master_data = 0;
       // PB + SB + Master Data
       if (master_view.size() >= 5) {
         data_bytes += 2;               // PB and SB are considered payload data
         data_bytes += master_view[4];  // NN
+        master_data = data_bytes;      // spec §8.1 numerator: own telegram only
       }
+      uint32_t slave_data = 0;
+      const bool has_slave = slave_view.size() >= 1;
       // Slave Data
-      if (slave_view.size() >= 1) {
-        data_bytes += slave_view[0];  // NN
+      if (has_slave) {
+        slave_data = slave_view[0];  // NN
+        data_bytes += slave_data;
       }
-      bus_monitor_->updateHandler([data_bytes, message_type](auto& m) {
+      bus_monitor_->updateHandler([data_bytes, master_data, slave_data,
+                                   has_slave, message_type](auto& m) {
         m.total_observed_data_bytes += data_bytes;
         if (message_type == MessageType::active)
-          m.total_sent_data_bytes += data_bytes;
+          m.total_sent_data_bytes += master_data;
+        // Spec §8.3 slave-side ingredients (every observed slave part,
+        // including our own reactive replies).
+        if (has_slave) {
+          m.total_slave_data_bytes += slave_data;
+          ++m.total_slave_telegrams;
+        }
       });
 
       if (telegram_type != TelegramType::broadcast && master_view.size() >= 2) {

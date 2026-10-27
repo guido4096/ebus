@@ -419,14 +419,65 @@ TEST_CASE("Handler errors: every error event pairs with a counter",
   REQUIRE(d.stats.errors == 1);
   REQUIRE(d.stats.last_error == ebus::ProtocolError::illegal_fsm_transition);
   // Pairing rule: top_errors and error_total move together — fetch both
-  // from the same snapshot and compare.
+  // from the same snapshot and compare. Evicted events stay accounted
+  // via top_errors_evicted (none here: single event, table not full).
   d.bus_monitor.fetchMetrics([&](const ebus::Metrics& m) {
     const uint32_t e_total = m.handler.error_passive +
                              m.handler.error_reactive + m.handler.error_active;
     uint32_t top_total = 0;
     for (const auto& e : m.handler.top_errors) top_total += e.count;
-    REQUIRE(e_total == top_total);
+    REQUIRE(m.handler.top_errors_evicted == 0);
+    REQUIRE(e_total == top_total + m.handler.top_errors_evicted);
     REQUIRE(e_total == 1);
   });
+}
+
+TEST_CASE("Handler errors: top_errors eviction keeps event accounting",
+          "[core][bushandler][pairing]") {
+  PreloadDriver d;
+  // 7 distinct addresses against cap 6, rising counts: when the seventh
+  // arrives the lowest-count slot (the first address, count 1) is
+  // evicted — its event must survive in top_errors_evicted so the sum
+  // still reconciles with every recorded call.
+  uint32_t calls = 0;
+  for (uint8_t a = 0x10; a < 0x17; ++a) {
+    for (uint32_t i = 0; i < static_cast<uint32_t>(a - 0x10) + 1; ++i) {
+      d.bus_monitor.recordHandlerError(a);
+      ++calls;
+    }
+  }
+  d.bus_monitor.fetchMetrics([&](const ebus::Metrics& m) {
+    uint32_t top_total = 0;
+    for (const auto& e : m.handler.top_errors) top_total += e.count;
+    REQUIRE(top_total + m.handler.top_errors_evicted == calls);
+    REQUIRE(m.handler.top_errors_evicted == 1);
+    // Survivors are the six highest counts (2..7); newest address won.
+    REQUIRE(m.handler.top_errors[0].address == 0x16);
+    REQUIRE(m.handler.top_errors[0].count == 7);
+  });
+}
+
+TEST_CASE("Data utilisation rates follow spec section 8",
+          "[core][metrics][utilisation]") {
+  ebus::metrics::HandlerMetrics h;
+  // Empty metrics: both rates zero, no division by zero.
+  REQUIRE(h.dataUtilisationMaster() == 0.0f);
+  REQUIRE(h.dataUtilisationSlave() == 0.0f);
+
+  // Spec §8.2 master example: NN=10 → (10+2)/18 = 66.67%.
+  h.total_sent_data_bytes = 12;
+  h.total_sent_protocol_bytes = 18;
+  REQUIRE(h.dataUtilisationMaster() == Catch::Approx(66.666f).margin(0.01f));
+
+  // Spec §8.4 slave example: 10 data bytes → 10/13 = 76.92%.
+  h.total_slave_data_bytes = 10;
+  h.total_slave_telegrams = 1;
+  REQUIRE(h.dataUtilisationSlave() == Catch::Approx(76.923f).margin(0.01f));
+
+  // Master numerator excludes slave NN: an active read (NN=3) against a
+  // 10-byte wire frame (ZZ PB SB NN + 3 data + CRC) rates (3+2)/10.
+  h.total_sent_data_bytes = 5;
+  h.total_sent_protocol_bytes = 10;
+  REQUIRE(h.dataUtilisationMaster() == Catch::Approx(50.0f).margin(0.01f));
 }
 #endif  // EBUS_SIMULATION

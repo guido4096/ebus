@@ -91,6 +91,10 @@ void BusMonitor::recordHandlerError(uint8_t address) {
   }
 
   if (!found) {
+    // Keep event accounting exact across eviction: the replaced slot's
+    // count survives in top_errors_evicted, so sum(top_errors) +
+    // top_errors_evicted equals every recorded error event.
+    handler_acc_.top_errors_evicted += top[min_idx].count;
     top[min_idx] = {address, 1, static_cast<uint64_t>(now_us)};
   }
 
@@ -422,6 +426,8 @@ void metrics::HandlerMetrics::reset() {
   total_sent_protocol_bytes = 0;
   total_observed_data_bytes = 0;
   total_observed_protocol_bytes = 0;
+  total_slave_data_bytes = 0;
+  total_slave_telegrams = 0;
   invalid_bytes = 0;
   resync_drops = 0;
   echo_mismatch_count = 0;
@@ -431,6 +437,7 @@ void metrics::HandlerMetrics::reset() {
   last_passive_reset_us = 0;
   last_active_reset_us = 0;
   top_errors.fill({});
+  top_errors_evicted = 0;
 
   sync = {};
   write = {};
@@ -446,11 +453,8 @@ void metrics::HandlerMetrics::toJson(detail::JsonWriter& writer) const {
 
   float e_rate = errorRate();
 
-  float pd_util = (total_sent_protocol_bytes > 0)
-                      ? (static_cast<float>(total_sent_data_bytes) /
-                         total_sent_protocol_bytes) *
-                            100.0f
-                      : 0.0f;
+  float util_master = dataUtilisationMaster();
+  float util_slave = dataUtilisationSlave();
 
   float global_eff = (total_observed_protocol_bytes > 0)
                          ? (static_cast<float>(total_observed_data_bytes) /
@@ -460,7 +464,8 @@ void metrics::HandlerMetrics::toJson(detail::JsonWriter& writer) const {
 
   auto scope = writer.objectScope();
   writer.writeFieldFloat("error_rate", e_rate);
-  writer.writeFieldFloat("protocol_data_utilization_rate", pd_util);
+  writer.writeFieldFloat("data_utilisation_master", util_master);
+  writer.writeFieldFloat("data_utilisation_slave", util_slave);
   writer.writeFieldFloat("global_payload_efficiency", global_eff);
   writer.writeField("messages_total", m_total);
   writer.writeField("messages_passive", messages_passive);
@@ -503,12 +508,15 @@ void metrics::HandlerMetrics::toJson(detail::JsonWriter& writer) const {
       }
     }
   }
+  writer.writeField("top_errors_evicted", top_errors_evicted);
 
   writer.writeField("total_sent_data_bytes", total_sent_data_bytes);
   writer.writeField("total_sent_protocol_bytes", total_sent_protocol_bytes);
   writer.writeField("total_observed_data_bytes", total_observed_data_bytes);
   writer.writeField("total_observed_protocol_bytes",
                     total_observed_protocol_bytes);
+  writer.writeField("total_slave_data_bytes", total_slave_data_bytes);
+  writer.writeField("total_slave_telegrams", total_slave_telegrams);
 
   writer.writeField("sync", sync);
   writer.writeField("write", write);

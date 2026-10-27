@@ -65,10 +65,19 @@ struct HandlerMetrics {
   uint32_t error_expected_silent = 0;
   uint32_t resets_passive = 0;
   uint32_t resets_active = 0;
+  // Spec §8.1 "Data Utilisation Rate as Master": numerator Σ(NN + 2)
+  // over our own active telegrams (PB/SB count as data); denominator
+  // Σ wire bytes, post AA/A9 expansion and incl. CRC (Sequence escapes
+  // below the handler write path).
   uint64_t total_sent_data_bytes = 0;
   uint64_t total_sent_protocol_bytes = 0;
   uint64_t total_observed_data_bytes = 0;
   uint64_t total_observed_protocol_bytes = 0;
+  // Spec §8.3 slave-side ingredients: ΣNN and telegram count of every
+  // observed slave part (any message type, incl. our reactive replies).
+  // NN/(NN+3) needs no wire-byte count, so these two suffice.
+  uint64_t total_slave_data_bytes = 0;
+  uint32_t total_slave_telegrams = 0;
   uint32_t invalid_bytes = 0;
   // Bytes dropped while draining to the next SYN after lost framing —
   // mostly arbitration-race resyncs (lost/stale QQ intents, counter-less),
@@ -85,6 +94,10 @@ struct HandlerMetrics {
   std::array<ErrorAddressStats,
              detail::SystemMetricsLimits::top_error_addresses_count>
       top_errors{};
+  // Error events dropped by top_errors eviction. Invariant: sum of
+  // top_errors counts + this equals every recorded error event, so
+  // sum + evicted reconciles with error_total.
+  uint32_t top_errors_evicted = 0;
 
   // Explicit phase timings
   MetricValues sync;
@@ -101,6 +114,23 @@ struct HandlerMetrics {
     return (m_total > 0 || e_total > 0)
                ? (static_cast<float>(e_total) / (m_total + e_total)) * 100.0f
                : 0.0f;
+  }
+
+  // Spec §8 "Data Utilisation Rate", in percent.
+  float dataUtilisationMaster() const {
+    return (total_sent_protocol_bytes > 0)
+               ? (static_cast<float>(total_sent_data_bytes) /
+                  static_cast<float>(total_sent_protocol_bytes)) *
+                     100.0f
+               : 0.0f;
+  }
+
+  float dataUtilisationSlave() const {
+    const uint64_t den = total_slave_data_bytes + 3ULL * total_slave_telegrams;
+    return (den > 0) ? (static_cast<float>(total_slave_data_bytes) /
+                        static_cast<float>(den)) *
+                           100.0f
+                     : 0.0f;
   }
 
   void reset();

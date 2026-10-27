@@ -368,7 +368,7 @@ inline constexpr size_t log_buffer_size = 256;
 
 // --- System Metrics Limits ---
 namespace SystemMetricsLimits {
-inline constexpr size_t top_error_addresses_count = 3;
+inline constexpr size_t top_error_addresses_count = 6;
 inline constexpr float bus_congestion_threshold_percent = 70.0f;
 inline constexpr uint64_t bus_congestion_detection_time_us = 10000000;
 inline constexpr uint32_t bus_congestion_detection_time_s = 10;
