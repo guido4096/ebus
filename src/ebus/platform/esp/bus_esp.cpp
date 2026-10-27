@@ -5,6 +5,7 @@
 
 #if defined(ESP_PLATFORM) && !EBUS_SIMULATION
 #include "platform/esp/bus_esp.hpp"
+#include "platform/syn_edges.hpp"
 
 #include <esp_timer.h>
 #include <hal/uart_ll.h>
@@ -419,11 +420,6 @@ void BusEsp::ebusUartEventRunner() {
             size_t best_idx = buffer_index_;
 
             portENTER_CRITICAL(&timer_mux_);
-            // Check if the 4 newest falling edges match the 0xAA (SYN) bit
-            // pattern: 0xAA (10101010) produces 4 falling edges spaced exactly
-            // 2 bit times (~833.33us) apart: Edge 0 (Start bit) -> Edge 1 (Bit
-            // 2) -> Edge 2 (Bit 4) -> Edge 3 (Bit 6). If pattern matches, Edge
-            // 0 is guaranteed to be the Start Bit (immune to task latency).
             size_t e3 = buffer_index_;
             size_t e2 = (buffer_index_ + falling_edge_buffer_size - 1) %
                         falling_edge_buffer_size;
@@ -432,19 +428,10 @@ void BusEsp::ebusUartEventRunner() {
             size_t e0 = (buffer_index_ + falling_edge_buffer_size - 3) %
                         falling_edge_buffer_size;
 
-            constexpr int64_t two_bit_time_us =
-                static_cast<int64_t>(2.0f * Physical::bit_time_us);  // ~833 us
-            int64_t d23 =
-                std::abs((micros_edge_buffer_[e3] - micros_edge_buffer_[e2]) -
-                         two_bit_time_us);
-            int64_t d12 =
-                std::abs((micros_edge_buffer_[e2] - micros_edge_buffer_[e1]) -
-                         two_bit_time_us);
-            int64_t d01 =
-                std::abs((micros_edge_buffer_[e1] - micros_edge_buffer_[e0]) -
-                         two_bit_time_us);
-
-            if (d23 < 200 && d12 < 200 && d01 < 200) {
+            if (isSynEdgePattern(micros_edge_buffer_[e0],
+                                 micros_edge_buffer_[e1],
+                                 micros_edge_buffer_[e2],
+                                 micros_edge_buffer_[e3])) {
               best_idx = e0;
             } else {
               int64_t best_delta = INT64_MAX;
