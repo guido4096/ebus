@@ -528,7 +528,6 @@ void BusEsp::ebusUartEventRunner() {
           portENTER_CRITICAL(&timer_mux_);
           notify_syn = syn_notification_pending_;
           syn_notification_pending_ = false;
-          recovering = recovering_;
           portEXIT_CRITICAL(&timer_mux_);
           if (notify_syn) lockAndInvoke(listeners_mutex_, getSynListeners());
 

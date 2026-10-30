@@ -736,6 +736,7 @@ void Impl::constructMembers(Controller* owner) {
   }
 }
 
+// cppcheck-suppress functionConst
 void Impl::applyRuntimeConfig(Controller* owner) {
   // Centralized synchronization using setters. Recursive mutex allows this
   // safely.
