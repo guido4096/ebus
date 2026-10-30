@@ -23,8 +23,6 @@ inline constexpr uint8_t bits_per_byte = 10;  // 1 start + 8 data + 1 stop
 inline constexpr uint64_t bit_time_num = 1250;
 inline constexpr uint64_t bit_time_den = 3;
 inline constexpr float bit_time_us = 1000000.0f / 2400.0f;  // ~416.67 us
-inline constexpr float byte_center_bits = 9.5;      // midpoint of the stop bit
-inline constexpr float start_bit_tolerance = 1.5f;  // bit times
 }  // namespace Physical
 
 // --- Component Layer ---
@@ -146,9 +144,26 @@ inline constexpr uint8_t max_data_bytes = 16;
 
 // --- Bus Layer ---
 namespace BusLimits {
-inline constexpr uint16_t window_min_us = 4000;
-inline constexpr uint16_t window_max_us = 5000;
-inline constexpr uint16_t offset_max_us = 500;
+// Earliest and latest master write start relative to the falling edge of
+// the SYN start bit (Spec 12 §10.8, tZmin = 4300 us; the 4456.24 us
+// conformance bound comes from Spec_Test_1 "time distance", ±4 us).
+// Recommended window_us ≤ ~4360 (Spec 12 §6.3, clock error x ≈ 0);
+// the validator maximum stays at 4424 to keep a latency guard below 4456.
+inline constexpr uint32_t t_z_min_us = 4300;
+inline constexpr uint32_t t_z_max_us = 4456;
+// Engineering allowance for GPIO ISR timestamp latency and UART/adapter
+// launch latency. Validate these margins on the actual board; they are not
+// measured calibration values. Late software execution is rejected separately.
+inline constexpr uint32_t guard_us = 32;
+// Minimum GPTimer lead time required when arming the fire alarm.
+inline constexpr uint32_t arm_margin_us = 15;
+// Falling-edge pattern tolerance around the 0xAA edge spacings (Spec 9.2).
+inline constexpr uint32_t edge_tolerance_us = 100;
+
+inline constexpr uint16_t window_min_us =
+    static_cast<uint16_t>(t_z_min_us + guard_us);
+inline constexpr uint16_t window_max_us =
+    static_cast<uint16_t>(t_z_max_us - guard_us);
 
 /**
  * Maximum number of concurrent bus listeners per event category.

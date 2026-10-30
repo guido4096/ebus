@@ -59,6 +59,7 @@ add_catch2_test_executable(test_telegram core/test_telegram.cpp)
 add_catch2_test_executable(test_request core/test_request.cpp)
 add_catch2_test_executable(test_handler core/test_handler.cpp)
 add_catch2_test_executable(test_bus_handler core/test_bus_handler.cpp)
+add_catch2_test_executable(test_syn_timing core/test_syn_timing.cpp)
 
 # Data Models and Types
 add_catch2_test_executable(test_device models/test_device.cpp)

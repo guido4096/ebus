@@ -221,13 +221,6 @@ void Controller::setWindow(const uint16_t& window_us) {
   if (impl_->configured_.load()) impl_->bus_->setWindow(window_us);
 }
 
-void Controller::setOffset(const uint16_t& offset_us) {
-  detail::platform::LockGuard<detail::platform::RecursiveMutex> lock(
-      impl_->config_mutex_);
-  config_.runtime.bus.offset_us = offset_us;
-  if (impl_->configured_.load()) impl_->bus_->setOffset(offset_us);
-}
-
 void Controller::setWatchdogTimeout(uint32_t timeout_ms) {
   detail::platform::LockGuard<detail::platform::RecursiveMutex> lock(
       impl_->config_mutex_);
@@ -750,7 +743,6 @@ void Impl::applyRuntimeConfig(Controller* owner) {
   owner->setAddress(owner->config_.runtime.address);
   owner->setLockCounter(owner->config_.runtime.lock_counter);
   owner->setWindow(owner->config_.runtime.bus.window_us);
-  owner->setOffset(owner->config_.runtime.bus.offset_us);
   owner->setWatchdogTimeout(owner->config_.runtime.bus.watchdog_timeout_ms);
   owner->setSessionTimeout(owner->config_.runtime.network.session_timeout_ms);
   owner->setTransmitTimeout(owner->config_.runtime.network.transmit_timeout_ms);

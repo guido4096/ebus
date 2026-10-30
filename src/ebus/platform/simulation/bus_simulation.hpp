@@ -47,7 +47,6 @@ class BusSimulation : public BusBase {
 
   // Configuration
   void setWindow(const uint16_t window_us);
-  void setOffset(const uint16_t offset_us);
   void setRuntimeConfig(const RuntimeConfig& runtime);
 
   // Working Methods

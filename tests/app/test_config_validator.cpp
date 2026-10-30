@@ -26,12 +26,17 @@ TEST_CASE("ConfigValidator: Validation Logic", "[detail][config]") {
   }
 
   SECTION("Invalid bus timings") {
-    config.runtime.bus.window_us = 2000;  // Too low
+    config.runtime.bus.window_us = 2000;  // Below tZmin + guard
     REQUIRE(ConfigValidator::validate(config) == false);
 
-    config.runtime.bus.window_us = 4300;
-    config.runtime.bus.offset_us = 600;  // Too high
+    config.runtime.bus.window_us = 4425;  // Above tZmax - guard
     REQUIRE(ConfigValidator::validate(config) == false);
+
+    config.runtime.bus.window_us = 4332;  // Window lower bound
+    REQUIRE(ConfigValidator::validate(config) == true);
+
+    config.runtime.bus.window_us = 4424;  // Window upper bound
+    REQUIRE(ConfigValidator::validate(config) == true);
   }
 
   SECTION("Timeout constraints") {

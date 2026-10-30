@@ -21,7 +21,6 @@ bool ConfigValidator::validate(const EbusConfig& config) {
   if (r.bus.window_us < BusLimits::window_min_us ||
       r.bus.window_us > BusLimits::window_max_us)
     return false;
-  if (r.bus.offset_us > BusLimits::offset_max_us) return false;
   if (r.bus.watchdog_timeout_ms == 0) return false;
 
   // 3. Scheduler & Logic
@@ -87,13 +86,6 @@ bool ConfigValidator::validateJson(std::string_view json) {
     if (!val || *val < BusLimits::window_min_us ||
         *val > BusLimits::window_max_us)
       return false;
-  }
-
-  auto offset_token = reader.get("bus.offset_us");
-  if (offset_token == JsonReader::Token::number ||
-      offset_token == JsonReader::Token::string) {
-    auto val = reader.asNumStrict<int>();
-    if (!val || *val > BusLimits::offset_max_us) return false;
   }
 
   if (reader.get("bus.watchdog_timeout_ms") == JsonReader::Token::number) {

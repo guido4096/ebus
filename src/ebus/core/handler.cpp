@@ -646,6 +646,10 @@ void Handler::requestBus(uint8_t byte) {
       // verified per byte in activeSendMaster; our back-to-back edges keep
       // restarting the foreign AUTO-SYN timer, so each echo keeps a fresh
       // 40ms budget (Spec 9.2) with no further thread wakeups required.
+      // On ESP stageMasterBulk() stays unpreloaded instead: only byte 1
+      // is staged and the bus task is echo-paced one byte per wakeup, so
+      // an abort never leaves unverified bytes queued (BusEsp::writeBytes
+      // refuses whole blocks to enforce this).
       stageMasterBulk();
       transitionTo(HandlerState::active_send_master);
     } else {
@@ -777,12 +781,14 @@ void Handler::activeSendMaster(uint8_t byte) {
     // Withdraw silently (no SYN): our abort SYN's echo would otherwise
     // arrive mid-next-attempt and re-trigger this same abort (self-
     // sustaining storm). The scheduler learns via the error event.
-    // Note: with a preloaded master part, already-queued remainder bytes
+    // Note: on preloaded (non-ESP) paths, already-queued remainder bytes
     // may still escape onto the wire here. Accepted by design: post-won
     // contention is near-impossible (wire-AND losers withdraw on the same
     // byte, our back-to-back edges suppress AUTO-SYN), and the alternative
     // — a per-byte wakeup lottery against the 40ms SYN-repeat — is what
-    // kills every attempt under load. See stageMasterBulk().
+    // kills every attempt under load. On ESP nothing beyond the last
+    // verified byte is queued (echo-paced, see stageMasterBulk), so the
+    // abort leaves a clean wire.
     callActiveReset();
     transitionTo(HandlerState::release_bus);
     return;
@@ -1083,10 +1089,15 @@ void Handler::callActiveReset() {
 void Handler::callWrite(uint8_t byte) { pending_write_ = byte; }
 
 void Handler::stageMasterBulk() {
+#if defined(ESP_PLATFORM) && !EBUS_SIMULATION
+  active_master_preloaded_ = false;
+  if (active_master_index_ == 1) callWrite(active_master_[1]);
+#else
   // Copies (no heap: Sequence is stack-backed) so a later active_master_
   // clear cannot dangle the staged block before the end-of-step flush.
   pending_write_bulk_.assignSlice(active_master_, 1);
   active_master_preloaded_ = true;
+#endif
 }
 
 void Handler::onBusRequested() {

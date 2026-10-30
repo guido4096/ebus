@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025-2026 Roland Jax
+ * Copyright (C) 2025-2026 Roland Jax, Guido Jansen
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -8,7 +8,6 @@
 #if defined(ESP_PLATFORM) && !EBUS_SIMULATION
 #include <freertos/FreeRTOS.h>
 
-#include <atomic>
 #include <cstdint>
 #include <ebus/config.hpp>
 #include <ebus/detail/protocol_limits.hpp>
@@ -18,11 +17,14 @@
 #include <memory>
 
 #include "core/bus_events.hpp"
+#include "core/syn_timing.hpp"
 #include "driver/gptimer.h"
 #include "driver/uart.h"
 #include "esp_timer.h"
+#include "platform/atomic.hpp"
 #include "platform/bus_base.hpp"
 #include "platform/service_thread.hpp"
+#include "soc/timer_group_struct.h"
 
 namespace ebus::detail {
 class Request;
@@ -64,7 +66,6 @@ class BusEsp : public BusBase {
 
   // Configuration
   void setWindow(const uint16_t window_us);
-  void setOffset(const uint16_t offset_us);
   void setRuntimeConfig(const RuntimeConfig& runtime);
 
   // Working Methods
@@ -99,24 +100,31 @@ class BusEsp : public BusBase {
 
   gptimer_handle_t gp_timer_ = nullptr;
   gptimer_handle_t syn_gp_timer_ = nullptr;
+  // Driver-allocated TIMG unit behind gp_timer_ (see identifyGpTimerUnit):
+  // the handle is opaque; the IRAM ISRs need the MMIO pair to read the raw
+  // count while the flash cache is off (gptimer_get_raw_count is flash code).
+  timg_dev_t* gp_timer_hw_ = nullptr;
+  uint32_t gp_timer_num_ = 0;
   esp_timer_handle_t syn_postpone_timer_ = nullptr;
 
   std::unique_ptr<ServiceThread> syn_worker_;
 
   std::unique_ptr<ServiceThread> worker_;
-  std::atomic<bool> running_{false};
+  Atomic running_;
 
-  // ISR/state
-  static constexpr uint8_t falling_edge_buffer_size = 12;
-
-  // The byte time at 2400 baud for 10 bits with a 0.5-bit offset is
-  // approximately 9.5 * bit_time_us = 9.5 * 416.67 us = 3958.33 us
-  static constexpr int64_t byte_time_center_us_ =
-      static_cast<int64_t>(Physical::byte_center_bits * Physical::bit_time_us);
-
-  uint8_t buffer_index_ = 0;  // Index for falling edge buffer
-  int64_t micros_edge_buffer_[falling_edge_buffer_size] = {0};
-  int64_t micros_start_bit_ = 0;  // Estimated start bit time
+  // All edge timestamps and arbitration deadlines use the same continuously
+  // running GPTimer clock. esp_timer timestamps are only for diagnostics/idle.
+  syn::Edges edges_;
+  syn::Stamp armed_syn_;
+  uint64_t qq_deadline_us_ = 0;
+  uint32_t consumed_syn_generation_ = 0;
+  uint8_t qq_address_ = 0;
+  uint32_t qq_request_generation_ = 0;
+  bool syn_notification_pending_ = false;
+  bool recovering_ = true;
+  bool gpio_registered_ = false;
+  bool gpio_service_owned_ = false;
+  bool timer_started_ = false;
 
   bool bus_request_flag_ = false;
   bool start_bit_flag_ = false;
@@ -141,7 +149,7 @@ class BusEsp : public BusBase {
   uint32_t syn_postponed_count_ = 0;
   bool syn_active_{false};
 
-  std::atomic<bool> syn_running_{false};
+  Atomic syn_running_;
   uint64_t syn_base_us_ = 0;    // Base SYN interval in microseconds
   uint64_t syn_unique_us_ = 0;  // Unique SYN interval in microseconds
 
@@ -151,11 +159,14 @@ class BusEsp : public BusBase {
   portMUX_TYPE listener_mux_ = portMUX_INITIALIZER_UNLOCKED;
 
   void recordUtilization(uint8_t byte);
+  void recoverUart();
 
   // setup helpers
   void configureUart();
   void configureGpio();
   void configureTimer();
+  // Resolves gp_timer_hw_/gp_timer_num_ after gptimer_start (task context).
+  void identifyGpTimerUnit();
 
   // UART event task: reads UART events and notifies listeners
   static void s_ebusUartEventRunner(void* arg);

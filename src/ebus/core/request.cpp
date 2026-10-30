@@ -43,7 +43,7 @@ void Request::reset() {
   collision_bar_ = false;
   if (bus_monitor_)
     bus_monitor_->updateRequest([](auto& m) { m.lock_counter_reset++; });
-  bus_request_.store(false, std::memory_order_release);
+  bus_request_.store(false);
   transitionTo(RequestState::observe);
 }
 
@@ -68,18 +68,19 @@ void Request::setStartBitCallback(Delegate<void()> callback) {
 
 bool Request::requestBus(uint8_t address, bool external) {
   if (busAvailable()) {
+    request_generation_.fetch_add(1);
     request_address_ = address;
     external_bus_request_.store(external, std::memory_order_release);
     // Set flag after data is ready (Release semantics)
-    bus_request_.store(true, std::memory_order_release);
+    bus_request_.store(true);
   } else if (bus_monitor_) {
     bus_monitor_->updateRequest([](auto& m) { m.bus_request_blocked++; });
   }
-  return bus_request_.load(std::memory_order_acquire);
+  return bus_request_.load();
 }
 
 void Request::busRequestCompleted() {
-  bus_request_.store(false, std::memory_order_release);
+  bus_request_.store(false);
   if (state_ == RequestState::observe) transitionTo(RequestState::first);
 
   if (external_bus_request_.load(std::memory_order_acquire)) {
@@ -90,7 +91,7 @@ void Request::busRequestCompleted() {
 }
 
 void Request::withdrawBusRequest() {
-  bus_request_.store(false, std::memory_order_release);
+  bus_request_.store(false);
   external_bus_request_.store(false, std::memory_order_release);
 }
 
@@ -99,7 +100,7 @@ void Request::startBit() {
   // could be caused by a spurious start bit from an interference impulse.
   // We can no longer trust the bus state, so we abort any pending request
   // and return to the safest state: observing the bus for a clean SYN.
-  bus_request_.store(false, std::memory_order_release);
+  bus_request_.store(false);
   collision_bar_ = false;
   transitionTo(RequestState::observe);
   result_ = RequestResult::observe_syn;
@@ -116,7 +117,7 @@ ebus::RequestResult Request::run(uint8_t byte) {
 
 bool Request::busAvailable() const {
   return result_ == RequestResult::observe_syn && lock_counter_ == 0 &&
-         !bus_request_.load(std::memory_order_acquire) && !collision_bar_;
+         !bus_request_.load() && !collision_bar_;
 }
 
 ebus::RequestState Request::getState() const { return state_; }
@@ -179,7 +180,7 @@ void Request::first(uint8_t byte) {
       // CRITICAL: We must re-arm the bus request immediately here.
       // If we wait until we see the next SYN in 'retry()', the Bus thread
       // will have already passed the write window for that SYN.
-      bus_request_.store(true, std::memory_order_release);
+      bus_request_.store(true);
       // Round 2 after AUTO-SYN belongs to same-class colliders only:
       // bar newcomers until the next SYN (Spec 6.2.2.2).
       collision_bar_ = true;

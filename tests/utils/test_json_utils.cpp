@@ -399,8 +399,8 @@ TEST_CASE("ConfigValidator: validateJson hex strings", "[app][config][json]") {
     REQUIRE_FALSE(ConfigValidator::validateJson(json));
   }
   SECTION("Hex string for nested field") {
-    // window_us: 4500 = 0x1194
-    std::string_view json = R"({"bus": {"window_us": "0x1194"}})";
+    // window_us: 4350 = 0x10FE
+    std::string_view json = R"({"bus": {"window_us": "0x10FE"}})";
     REQUIRE(ConfigValidator::validateJson(json));
   }
   SECTION("Illegal characters in hex string") {

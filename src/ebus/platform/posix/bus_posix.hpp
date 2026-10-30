@@ -53,7 +53,6 @@ class BusPosix : public BusBase {
   // Configuration
   // kept for BusEsp compatibility, but not used in Posix implementation
   void setWindow(const uint16_t window);
-  void setOffset(const uint16_t offset);
   void setRuntimeConfig(const RuntimeConfig& runtime);
 
   // Working Methods

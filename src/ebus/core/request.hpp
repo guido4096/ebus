@@ -15,6 +15,8 @@
 #include <ebus/metrics.hpp>
 #include <ebus/types.hpp>
 
+#include "platform/atomic.hpp"
+
 namespace ebus::detail {
 
 class BusMonitor;
@@ -48,21 +50,28 @@ class Request {
   void startBit();
   RequestResult run(uint8_t byte);
 
+  inline __attribute__((always_inline)) uint32_t busRequestGeneration() const {
+    return request_generation_.load();
+  }
+
   // Status/Telemetry
   bool busAvailable() const;
   RequestState getState() const;
   RequestResult getResult() const;
 
   // Inline and non-virtual for ESP32 ISR safety (IRAM) and performance
-  inline uint8_t busRequestAddress() const { return request_address_; }
-  inline bool busRequestPending() const {
-    return bus_request_.load(std::memory_order_acquire);
+  inline __attribute__((always_inline)) uint8_t busRequestAddress() const {
+    return request_address_;
+  }
+  inline __attribute__((always_inline)) bool busRequestPending() const {
+    return bus_request_.load();
   }
   inline bool busRequestIsExternal() const {
     return external_bus_request_.load(std::memory_order_acquire);
   }
 
  private:
+  platform::Atomic request_generation_;
   BusMonitor* bus_monitor_ = nullptr;
 
   uint8_t lock_counter_max_ = ebus::RuntimeConfig{}.lock_counter;
@@ -81,7 +90,7 @@ class Request {
   uint8_t request_address_ = 0;
 
   // Indicates whether a bus request is present
-  std::atomic<bool> bus_request_ = {false};
+  platform::Atomic bus_request_;
 
   // Indicates whether the bus request is internal or external
   std::atomic<bool> external_bus_request_ = {false};

@@ -98,11 +98,6 @@ class Controller {
   void setWindow(const uint16_t& window_us);
 
   /**
-   * @brief Sets the hardware offset for UART context switching in microseconds.
-   */
-  void setOffset(const uint16_t& offset_us);
-
-  /**
    * @brief Sets the inactivity timeout for the bus handler.
    */
   void setWatchdogTimeout(uint32_t timeout_ms);

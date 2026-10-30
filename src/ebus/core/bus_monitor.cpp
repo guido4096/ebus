@@ -140,12 +140,6 @@ void BusMonitor::recordMultiByteEvent(bool has_syn) {
   }
 }
 
-void BusMonitor::recordStartBitDelta(uint32_t delta_us) {
-  size_t bucket = delta_us < 600 ? delta_us / 75 : 7;
-  bus_acc_.start_bit_delta_histogram[bucket].fetch_add(
-      1, std::memory_order_relaxed);
-}
-
 void BusMonitor::recordContest(bool won, uint8_t ours, uint8_t theirs,
                                uint8_t round) {
   platform::LockGuard<platform::Mutex> lock(metrics_mutex_);
@@ -297,12 +291,6 @@ void BusMonitor::fetchMetrics(
     bm.transmit = transmit.getValues();
     bm.syn_postpone = syn_postpone.getValues();
     bm.loop_cycle = loop_cycle.getValues();
-
-    for (size_t i = 0; i < bm.start_bit_delta_histogram.size(); ++i) {
-      bm.start_bit_delta_histogram[i].store(
-          bus_acc_.start_bit_delta_histogram[i].load(std::memory_order_relaxed),
-          std::memory_order_relaxed);
-    }
 
     auto now = Clock::now();
     uint64_t uptime_us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -602,9 +590,6 @@ void metrics::BusMetrics::reset() {
   transmit = {};
   syn_postpone = {};
   loop_cycle = {};
-
-  for (auto& bucket : start_bit_delta_histogram)
-    bucket.store(0, std::memory_order_relaxed);
 }
 
 void metrics::BusMetrics::toJson(detail::JsonWriter& writer) const {
@@ -635,11 +620,6 @@ void metrics::BusMetrics::toJson(detail::JsonWriter& writer) const {
   writer.writeField("transmit", transmit);
   writer.writeField("syn_postpone", syn_postpone);
   writer.writeField("loop_cycle", loop_cycle);
-
-  auto hist_scope = writer.arrayScope("start_bit_delta_histogram");
-  for (const auto& bucket : start_bit_delta_histogram) {
-    writer.writeValue(bucket.load(std::memory_order_relaxed));
-  }
 }
 
 void metrics::DeviceMetrics::reset() {

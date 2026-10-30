@@ -118,13 +118,6 @@ void BusPosix::setWindow(const uint16_t window_us) {
                                : window_us;
 }
 
-void BusPosix::setOffset(const uint16_t offset_us) {
-  // Validate offset
-  runtime_.bus.offset_us = (offset_us > BusLimits::offset_max_us)
-                               ? ebus::RuntimeConfig{}.bus.offset_us
-                               : offset_us;
-}
-
 void BusPosix::setRuntimeConfig(const RuntimeConfig& runtime) {
   bool should_start = false;
   bool should_stop = false;
@@ -134,12 +127,10 @@ void BusPosix::setRuntimeConfig(const RuntimeConfig& runtime) {
     bool was_enabled = runtime_.bus.syn_gen;
     runtime_ = runtime;
 
-    // Validate window and offset
+    // Validate window
     if (runtime_.bus.window_us < BusLimits::window_min_us ||
         runtime_.bus.window_us > BusLimits::window_max_us)
       runtime_.bus.window_us = ebus::RuntimeConfig{}.bus.window_us;
-    if (runtime_.bus.offset_us > BusLimits::offset_max_us)
-      runtime_.bus.offset_us = ebus::RuntimeConfig{}.bus.offset_us;
 
     // Always recalculate timing durations based on the new configuration
     syn_base_ms_dur_ = std::chrono::milliseconds(BusLimits::Syn::base_ms);

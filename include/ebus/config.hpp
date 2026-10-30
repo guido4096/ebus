@@ -30,8 +30,7 @@ struct RuntimeConfig {
   bool system_response = true;
 
   struct Bus {
-    uint16_t window_us = 4400;  // us
-    uint16_t offset_us = 50;    // us
+    uint16_t window_us = 4350;  // us
     uint32_t watchdog_timeout_ms = 250;
     bool syn_gen = false;
   } bus;

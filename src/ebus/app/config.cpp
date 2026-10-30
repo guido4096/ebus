@@ -26,7 +26,6 @@ void RuntimeConfig::toJson(detail::JsonWriter& writer) const {
   {
     auto busScope = writer.objectScope("bus");
     writer.writeField("window_us", bus.window_us);
-    writer.writeField("offset_us", bus.offset_us);
     writer.writeField("watchdog_timeout_ms", bus.watchdog_timeout_ms);
     writer.writeField("syn_gen", bus.syn_gen);
   }
@@ -124,12 +123,6 @@ bool RuntimeConfig::mergeFromJson(std::string_view json) {
             inner.next();
             auto val = inner.asNumStrict<uint16_t>();
             if (val) bus.window_us = *val;
-            return val.has_value();
-          }
-          if (k == "offset_us") {
-            inner.next();
-            auto val = inner.asNumStrict<uint16_t>();
-            if (val) bus.offset_us = *val;
             return val.has_value();
           }
           if (k == "watchdog_timeout_ms") {

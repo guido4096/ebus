@@ -84,11 +84,6 @@ void BusSimulation::setWindow(const uint16_t window_us) {
   runtime_.bus.window_us = window_us;
 }
 
-void BusSimulation::setOffset(const uint16_t offset_us) {
-  // Not directly used in simulation, but kept for API compatibility
-  runtime_.bus.offset_us = offset_us;
-}
-
 void BusSimulation::setRuntimeConfig(const RuntimeConfig& runtime) {
   bool should_start_syn = false;
   bool should_stop_syn = false;
